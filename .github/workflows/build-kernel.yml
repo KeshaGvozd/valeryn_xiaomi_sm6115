@@ -1,0 +1,75 @@
+name: Build Kernel (Poco M3 / Chime)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - android16
+    paths-ignore:
+      - '**.md'
+
+env:
+  TZ: Europe/Moscow
+  KERNEL_DIR: $GITHUB_WORKSPACE
+  DEFCONFIG: vendor/chime-stock_defconfig
+  ANYKERNEL_REPO: https://github.com/frstprjkt/AnyKernel3
+  ANYKERNEL_BRANCH: chime
+
+jobs:
+  build:
+    name: Build Kernel
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: Checkout Kernel Source
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 1
+
+    - name: Setup Environment
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y bc bison build-essential ccache curl flex g++-multilib gcc-multilib git gnupg gperf imagemagick lib32ncurses5-dev lib32readline-dev lib32z1-dev liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev python3
+        
+    - name: Download Clang Toolchain (ZyC)
+      run: |
+        mkdir -p $GITHUB_WORKSPACE/clang
+        cd $GITHUB_WORKSPACE/clang
+        curl -LO "https://raw.githubusercontent.com/ZyC-P/zyc-clang/master/clang-zyc.tar.gz"
+        tar -xf clang-zyc.tar.gz
+        rm clang-zyc.tar.gz
+        
+    - name: Build Kernel
+      run: |
+        export PATH="$GITHUB_WORKSPACE/clang/bin:$PATH"
+        export KBUILD_COMPILER_STRING="$(clang --version | head -n 1 | perl -pe 's/\(http.*?\)//gs' | sed -e 's/  */ /g' -e 's/[[:space:]]*$//')"
+        
+        make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
+                              CROSS_COMPILE=aarch64-linux-gnu- \
+                              CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+                              LLVM=1 \
+                              LLVM_IAS=1 \
+                              $DEFCONFIG
+                              
+        make -j$(nproc --all) O=out ARCH=arm64 CC=clang \
+                              CROSS_COMPILE=aarch64-linux-gnu- \
+                              CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+                              LLVM=1 \
+                              LLVM_IAS=1
+
+    - name: Setup AnyKernel3
+      if: success()
+      run: |
+        git clone -b $ANYKERNEL_BRANCH $ANYKERNEL_REPO AnyKernel3
+        cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/ || cp out/arch/arm64/boot/Image AnyKernel3/
+        cd AnyKernel3
+        # Clean up unnecessary files for zip
+        rm -rf .git* README.md
+        zip -r9 ../Valeryn-KSUN-Chime.zip *
+
+    - name: Upload Build Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Valeryn-KSUN-Chime
+        path: Valeryn-KSUN-Chime.zip
